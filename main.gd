@@ -341,6 +341,8 @@ var thumbs := {}
 
 var page := "home"
 var cur := ""  # conversation ouverte ("all" ou id)
+var open_convs: Array = []  # conversations privées ouvertes (mini-fenêtres) ; « Général » est toujours là
+var dock: HBoxContainer
 var list_dirty := true
 var chat_dirty := false
 var stick := 0
@@ -392,7 +394,10 @@ func _ready() -> void:
 	if test_role != "":
 		auto_accept = true
 		print("CHAT[%s] %s tcp=%d udp=%d" % [test_role, me_id, tcp_port, udp_port])
-	_show("home")
+	if test_role == "":
+		_open("all")  # on démarre sur le Général
+	else:
+		_show("home")
 
 
 func _notification(what: int) -> void:
@@ -435,6 +440,7 @@ func _load_all() -> void:
 		if d is Dictionary:
 			history = d.get("history", {})
 			unread = d.get("unread", {})
+			open_convs = d.get("open", [])
 			for id in d.get("peers", {}):
 				var pd: Dictionary = d["peers"][id]
 				var pr := _new_peer(str(id))
@@ -465,7 +471,7 @@ func _save_all() -> void:
 		h[conv] = a.slice(maxi(0, a.size() - MAX_HIST))
 	var f := FileAccess.open(_p("history.json"), FileAccess.WRITE)
 	if f:
-		f.store_string(JSON.stringify({"history": h, "unread": unread, "peers": pd}))
+		f.store_string(JSON.stringify({"history": h, "unread": unread, "peers": pd, "open": open_convs}))
 	save_t = -1.0
 
 
@@ -902,6 +908,8 @@ func _add_msg(conv: String, m: Dictionary) -> void:
 	if not history.has(conv):
 		history[conv] = []
 	(history[conv] as Array).append(m)
+	if conv != "all" and not m.get("me", false) and conv not in open_convs:
+		open_convs.append(conv)
 	if not m.get("me", false):
 		if not (page == "chat" and cur == conv):
 			unread[conv] = int(unread.get(conv, 0)) + 1
@@ -1244,7 +1252,7 @@ func _refresh_home() -> void:
 	ic.fill = Color(C_OK, 0.18)
 	ic.col = C_OK
 	hb.add_child(ic)
-	var t := _lbl("Tous", 19)
+	var t := _lbl("Général", 19)
 	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(t)
 	hb.add_child(_spacer())
@@ -1356,6 +1364,13 @@ func _build_chat() -> void:
 	chat_name.clip_text = true
 	head.add_child(chat_name)
 	p_chat.add_child(head)
+	var dock_scroll := ScrollContainer.new()
+	dock_scroll.custom_minimum_size = Vector2(0, 52)
+	dock_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	dock = HBoxContainer.new()
+	dock.add_theme_constant_override("separation", 8)
+	dock_scroll.add_child(dock)
+	p_chat.add_child(dock_scroll)
 	msg_scroll = ScrollContainer.new()
 	msg_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	msg_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -1482,6 +1497,9 @@ func _show(pg: String) -> void:
 
 func _open(conv: String) -> void:
 	cur = conv
+	if conv != "all" and conv not in open_convs:
+		open_convs.append(conv)
+		_save_soon()
 	unread.erase(conv)
 	_show("chat")
 	_ui_chat_head()
@@ -1493,7 +1511,7 @@ func _open(conv: String) -> void:
 
 func _ui_chat_head() -> void:
 	if cur == "all":
-		chat_name.text = "Tous"
+		chat_name.text = "Général"
 		chat_avatar.visible = false
 		chat_icon.visible = true
 	elif peers.has(cur):
@@ -1508,6 +1526,89 @@ func _ui_chat_head() -> void:
 		if k != cur and int(unread[k]) > 0:
 			other = true
 	chat_back.badge = other
+	_render_dock()
+
+
+## Mini-fenêtres : « Général » (coché, toujours présent) puis une pastille par conversation privée, avec croix rouge.
+func _render_dock() -> void:
+	if dock == null:
+		return
+	for c in dock.get_children():
+		c.queue_free()
+	_dock_chip("all", "Général", null, cur == "all")
+	for id in open_convs.duplicate():
+		if peers.has(id):
+			_dock_chip(id, str(peers[id].name), peers[id], cur == id)
+		else:
+			open_convs.erase(id)
+	var contacts := IconBtn.new("people", 44)
+	contacts.tooltip_text = "Contacts"
+	contacts.pressed.connect(func(): _show("home"))
+	dock.add_child(contacts)
+
+
+func _dock_chip(id: String, title: String, pr, active: bool) -> void:
+	var chip := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(C_OK, 0.22) if active else C_CARD
+	sb.set_corner_radius_all(22)
+	sb.content_margin_left = 10
+	sb.content_margin_right = 8
+	sb.content_margin_top = 5
+	sb.content_margin_bottom = 5
+	chip.add_theme_stylebox_override("panel", sb)
+	chip.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chip.add_child(h)
+	if pr == null:
+		var ok := IconBtn.new("check", 28)  # Général : validé par défaut
+		ok.fill = C_OK
+		ok.col = C_BG
+		ok.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		h.add_child(ok)
+	else:
+		var av := Avatar.new(30)
+		av.variant = pr.mascot
+		av.show_online = true
+		av.online = _is_online(pr)
+		av.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		h.add_child(av)
+	var l := _lbl(title, 16)
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(l)
+	if int(unread.get(id, 0)) > 0 and not active:
+		h.add_child(_count(int(unread[id])))
+	if pr != null:
+		var x := IconBtn.new("close", 28)  # croix rouge : retire la mini-fenêtre
+		x.fill = Color("ff6b6b")
+		x.col = Color.WHITE
+		x.tooltip_text = "Fermer"
+		x.pressed.connect(func(): _close_conv(id))
+		h.add_child(x)
+	chip.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT and cur != id:
+			_open(id))
+	dock.add_child(chip)
+
+
+func _close_conv(id: String) -> void:
+	open_convs.erase(id)
+	_save_soon()
+	if cur == id:
+		_open("all")
+	else:
+		_render_dock()
+
+
+## Envoie dans le Général un message (ou un fichier) reçu/écrit en privé.
+func _forward_to_general(m: Dictionary) -> void:
+	if m.get("k", "") == "t":
+		_send_text("all", str(m.text))
+	elif m.get("k", "") == "f" and FileAccess.file_exists(str(m.get("path", ""))):
+		_send_file("all", str(m.path))
 
 
 func _hm(ts: float) -> String:
@@ -1570,6 +1671,14 @@ func _render_chat() -> void:
 		else:
 			_file_body(v, foot, m, me, maxw)
 		foot.add_child(_spacer())
+		if cur != "all" and (m.get("k", "") == "t" or (m.get("k", "") == "f" and m.get("st", "") == "done")):
+			var fw := IconBtn.new("send", 22)
+			fw.col = C_DIM
+			fw.tooltip_text = "Envoyer dans le Général"
+			fw.pressed.connect(func():
+				fw.col = C_OK
+				_forward_to_general(m))
+			foot.add_child(fw)
 		foot.add_child(_lbl(_hm(float(m.ts)), 12, C_DIM))
 		v.add_child(foot)
 		bub.add_child(v)
