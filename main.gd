@@ -2,7 +2,12 @@ extends Control
 ## Pocket Chat : chat + fichiers sur le réseau local (Wi-Fi/LAN), sans serveur ni internet. PC Linux + Android.
 ## Découverte : beacon UDP (broadcast) ; liaison : TCP pair-à-pair. Trame : [type u8][longueur u16 LE][données]
 
-const APP_VERSION := "0.1.3"
+const APP_VERSION: String = preload("res://version.gd").VERSION
+const KTok := preload("res://kit/tokens.gd")
+const KIcon := preload("res://kit/icon.gd")
+const KPx := preload("res://kit/ui/px.gd")
+const KPixelize := preload("res://kit/pixelize.gd")
+const KNav := preload("res://kit/ui/k_navbar.gd")
 const PORT := 5205
 const BEACON_PORT := 5206
 const T_HELLO := 1  # json {id, name, mascot}
@@ -71,11 +76,7 @@ class Orb extends Control:
 
 class Ico:
 	static func box(ci: CanvasItem, r: Rect2, rad: float, col: Color) -> void:
-		var sb := StyleBoxFlat.new()
-		sb.bg_color = col
-		sb.set_corner_radius_all(int(rad))
-		sb.anti_aliasing_size = 1.0
-		ci.draw_style_box(sb, r)
+		KPx.panel(ci, r, col, Color(0, 0, 0, 0), false)
 
 	static func draw_kind(ci: CanvasItem, kind: String, c: Vector2, k: float, col: Color) -> void:
 		var w := 3.2 * k
@@ -144,6 +145,8 @@ class Ico:
 
 
 class IconBtn extends Control:
+	const ICONMAP := {"clip": "paperclip", "back": "chevron-left", "gear": "settings", "people": "user", "refresh": "refresh-cw",
+			"download": "download", "close": "x", "check": "check", "chevron": "chevron-right", "folder": "folder-open", "file": "file-text", "clock": "clock"}
 	signal pressed
 	var kind := "refresh"
 	var col := Color("e8ecf1"):
@@ -190,15 +193,26 @@ class IconBtn extends Control:
 	func _draw() -> void:
 		var c := size / 2.0
 		var rad := minf(size.x, size.y) / 2.0
-		if fill.a > 0.0:
-			draw_circle(c, rad, fill.lightened(0.12) if hot else fill)
+		var base := fill if fill.a > 0.0 else Color("232a34")
+		KPx.panel(self, Rect2(Vector2.ZERO, size).grow(-2), base.lightened(0.12) if hot else base, Color(0, 0, 0, 0), true)
+		if kind == "send":  # flèche pixel art vers le haut
+			var u := maxf(2.0, floorf(size.y / 14.0))
+			var sz := KPx.sprite_size(KPx.ARROW_UP, u)
+			KPx.sprite(self, KPx.ARROW_UP, (c - sz * 0.5).round(), u, {"#": col})
+			return
+		var ico: String = ICONMAP.get(kind, "")
+		if ico != "":
+			var px := 24 if size.y < 56 else 32
+			draw_set_transform(c, angle if spin else 0.0)
+			draw_texture_rect(KIcon.texture(ico, px), Rect2(-px * 0.5, -px * 0.5, px, px), false, col)
+			draw_set_transform(Vector2.ZERO)
 		else:
-			draw_circle(c, rad, Color(1, 1, 1, 0.12 if hot else 0.06))
-		draw_set_transform(c, angle if spin else 0.0)
-		Ico.draw_kind(self, kind, Vector2.ZERO, minf(size.x, size.y) / 46.0 * 0.78, col)
-		draw_set_transform(Vector2.ZERO)
+			draw_set_transform(c, angle if spin else 0.0)
+			Ico.draw_kind(self, kind, Vector2.ZERO, minf(size.x, size.y) / 46.0 * 0.78, col)
+			draw_set_transform(Vector2.ZERO)
 		if badge:
-			draw_circle(c + Vector2(rad * 0.7, -rad * 0.7), rad * 0.26, Color("ff6b6b"))
+			draw_rect(Rect2(c + Vector2(rad * 0.5, -rad * 0.9), Vector2(10, 10)), Color.BLACK)
+			draw_rect(Rect2(c + Vector2(rad * 0.5 + 2, -rad * 0.9 + 2), Vector2(6, 6)), Color("ff6b6b"))
 
 
 class Toggle extends Control:
@@ -226,11 +240,9 @@ class Toggle extends Control:
 	func _draw() -> void:
 		var h := size.y
 		var bg := Color("2a313c").lerp(Color("4de1b4"), t)
-		draw_rect(Rect2(h / 2, 0, size.x - h, h), bg, true)
-		draw_circle(Vector2(h / 2, h / 2), h / 2, bg)
-		draw_circle(Vector2(size.x - h / 2, h / 2), h / 2, bg)
-		draw_circle(Vector2(lerpf(h / 2, size.x - h / 2, t), h / 2 + 1.0), h / 2 - 3, Color(0, 0, 0, 0.25))
-		draw_circle(Vector2(lerpf(h / 2, size.x - h / 2, t), h / 2), h / 2 - 4, Color.WHITE)
+		KPx.panel(self, Rect2(Vector2.ZERO, size).grow(-2), bg, Color(0, 0, 0, 0), false)
+		var kx := lerpf(6.0, size.x - h + 2.0, t)
+		KPx.panel(self, Rect2(kx, 6, h - 8, h - 12), Color.WHITE, Color(0, 0, 0, 0), false)
 
 
 ## Mascotte Goody animée dans un rond (variante 0-7). anim : idle / happy / wait / off / sad.
@@ -271,18 +283,21 @@ class Avatar extends Control:
 	func _draw() -> void:
 		var c := size / 2.0
 		var r := minf(size.x, size.y) / 2.0
-		draw_circle(c, r, (BODIES[variant] as Color).darkened(0.62))
+		KPx.panel(self, Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0).grow(-1), (BODIES[variant] as Color).darkened(0.62), Color("0b0e12") if not selected else Color("4de1b4"), false, 1)
 		var s := maxi(32, int(r * 2.0 * 0.86 / 32.0) * 32)
 		var row: int = int(ROWS[anim]) + variant * 5
 		draw_texture_rect_region(SHEET, Rect2((c - Vector2(s, s) / 2.0).round(), Vector2(s, s)),
 				Rect2((int(t) % 4) * 32, row * 32, 32, 32))
-		draw_arc(c, r - 1.5, 0.0, TAU, 48, Color("4de1b4") if selected else Color(1, 1, 1, 0.12), 3.0 if selected else 1.5, true)
 		if show_online:
-			var p := c + Vector2(r * 0.72, r * 0.72)
-			draw_circle(p, r * 0.24, Color("171b22"))
-			draw_circle(p, r * 0.16, Color("4de1b4") if online else Color("5b6573"))
+			var d := maxf(10.0, r * 0.5)
+			var p := (c + Vector2(r * 0.55, r * 0.55)).round()
+			draw_rect(Rect2(p, Vector2(d, d)), Color.BLACK)
+			draw_rect(Rect2(p + Vector2(2, 2), Vector2(d - 4, d - 4)), Color("4de1b4") if online else Color("5b6573"))
 		if badge:
-			draw_circle(c + Vector2(r * 0.72, -r * 0.72), r * 0.27, Color("ff6b6b"))
+			var d2 := maxf(10.0, r * 0.5)
+			var p2 := (c + Vector2(r * 0.55, -r * 1.05)).round()
+			draw_rect(Rect2(p2, Vector2(d2, d2)), Color.BLACK)
+			draw_rect(Rect2(p2 + Vector2(2, 2), Vector2(d2 - 4, d2 - 4)), Color("ff6b6b"))
 
 
 ## Carte tapable (distingue le toucher du défilement).
@@ -334,6 +349,7 @@ var incoming: Array = []  # connexions entrantes pas encore identifiées
 var server := TCPServer.new()
 var lan := PacketPeerUDP.new()
 var beacon := PacketPeerUDP.new()
+var sweep_n := 0
 var mlock = null
 var dl_dir_cache := ""
 var save_t := -1.0
@@ -374,6 +390,7 @@ var set_name_edit: LineEdit
 var set_pickers: Array = []
 var set_dir_lbl: Label
 var fd: FileDialog
+var nav: KNav
 
 
 func _ready() -> void:
@@ -385,7 +402,9 @@ func _ready() -> void:
 		_android_init()
 	_read_profile()
 	_ensure_self()
+	KTok.set_pixel(true)
 	_build_ui()
+	KPixelize.install(self)
 	if server.listen(tcp_port) != OK:
 		push_warning("TCP %d occupé" % tcp_port)
 	if lan.bind(udp_port) != OK:
@@ -398,6 +417,15 @@ func _ready() -> void:
 		_open("all")  # on démarre sur le Général
 	else:
 		_show("home")
+	_start_updates()
+
+## Mise à jour automatique commune aux apps Goodview (kit/update) : carte pixel art, bouton vert « METTRE À JOUR ».
+func _start_updates() -> void:
+	if test_role != "":
+		return
+	var ui = preload("res://kit/update/update_ui.gd").new()
+	add_child(ui)
+	ui.setup("goodview-software/pocket-chat", APP_VERSION)
 
 
 func _notification(what: int) -> void:
@@ -446,6 +474,8 @@ func _load_all() -> void:
 				var pr := _new_peer(str(id))
 				pr.name = str(pd.get("name", "?"))
 				pr.mascot = int(pd.get("mascot", 0))
+				pr.ip = str(pd.get("ip", ""))
+				pr.port = int(pd.get("port", PORT))
 	for conv in history:  # un transfert interrompu par la fermeture ne reprend pas
 		for m in history[conv]:
 			if m.get("k", "") == "f" and m.get("st", "") in ["offer", "send", "recv"]:
@@ -464,7 +494,7 @@ func _save_all() -> void:
 	var pd := {}
 	for id in peers:
 		if not peers[id].get("self", false):
-			pd[id] = {"name": peers[id].name, "mascot": peers[id].mascot}
+			pd[id] = {"name": peers[id].name, "mascot": peers[id].mascot, "ip": peers[id].ip, "port": peers[id].port}
 	var h := {}
 	for conv in history:
 		var a: Array = history[conv]
@@ -656,6 +686,14 @@ func _send_beacon() -> void:
 		var p := str(a).split(".")
 		if p.size() == 4 and not str(a).begins_with("127.") and not str(a).begins_with("169.254."):
 			dests.append(["%s.%s.%s.255" % [p[0], p[1], p[2]], udp_port])
+	sweep_n += 1
+	if sweep_n % 4 == 1:  # diffusion bloquée (point d'accès, partage de connexion) : balayage unicast du /24
+		for a in IP.get_local_addresses():
+			var p2 := str(a).split(".")
+			if p2.size() == 4 and not str(a).begins_with("127.") and not str(a).begins_with("169.254."):
+				for h in range(1, 255):
+					if str(h) != p2[3]:
+						dests.append(["%s.%s.%s.%d" % [p2[0], p2[1], p2[2], h], udp_port])
 	for e in extra_peers:
 		var hp := e.split(":")
 		if hp.size() == 2:
@@ -714,8 +752,10 @@ func _peer_tick(pr: Dictionary, now: int, delta: float) -> void:
 	var c: StreamPeerTCP = pr.conn
 	if c == null:
 		var online := now - int(pr.seen) < ONLINE_MS
-		if online and pr.ip != "" and (me_id < str(pr.id) or now - int(pr.first) > 3000):
-			if now - int(pr.get("try", 0)) > 2500:
+		# Pair vu par beacon : on se connecte. Pair seulement connu (broadcast bloqué par le réseau) : on retente son dernier IP.
+		var known: bool = (not online) and pr.ip != "" and pr.ip != "127.0.0.1"
+		if (online or known) and pr.ip != "" and (me_id < str(pr.id) or now - int(pr.first) > 3000 or known):
+			if now - int(pr.get("try", 0)) > (2500 if online else 7000):
 				pr["try"] = now
 				c = StreamPeerTCP.new()
 				var ce := c.connect_to_host(pr.ip, pr.port)
@@ -1079,14 +1119,18 @@ func _make_theme() -> Theme:
 	th.set_color("font_color", "LineEdit", C_TEXT)
 	th.set_color("caret_color", "LineEdit", C_OK)
 	var le := StyleBoxFlat.new()
-	le.bg_color = C_CARD2
-	le.set_corner_radius_all(24)
+	le.bg_color = Color(0, 0, 0, 0.85)  # champ « Minecraft » : noir, cadre gris 2 px, blanc au focus
+	le.border_color = Color("5a5a5a")
+	le.set_border_width_all(2)
+	le.set_corner_radius_all(0)
 	le.content_margin_left = 18
 	le.content_margin_right = 18
 	le.content_margin_top = 10
 	le.content_margin_bottom = 10
 	th.set_stylebox("normal", "LineEdit", le)
-	th.set_stylebox("focus", "LineEdit", le)
+	var lf: StyleBoxFlat = le.duplicate()
+	lf.border_color = Color("a0a0a0")
+	th.set_stylebox("focus", "LineEdit", lf)
 	th.set_stylebox("focus", "ScrollContainer", StyleBoxEmpty.new())
 	var track := StyleBoxFlat.new()
 	track.bg_color = Color("2a313c")
@@ -1107,7 +1151,7 @@ func _make_theme() -> Theme:
 	pop.bg_color = C_CARD
 	th.set_stylebox("panel", "Window", pop)
 	th.set_stylebox("embedded_border", "Window", pop)
-	return th
+	return KPixelize.theme(th)
 
 
 func _lbl(t: String, sz := 17, col := C_TEXT) -> Label:
@@ -1156,6 +1200,12 @@ func _build_ui() -> void:
 	_build_home()
 	_build_chat()
 	_build_settings()
+	nav = KNav.new()
+	nav.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	nav.offset_top = -KNav.HEIGHT
+	nav.setup([{"id": "home", "label": "Contacts", "icon": "message-circle"}, {"id": "set", "label": "Réglages", "icon": "settings"}], "home")
+	nav.selected.connect(func(id: String): _show(id))
+	add_child(nav)
 	fd = FileDialog.new()
 	fd.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	fd.access = FileDialog.ACCESS_FILESYSTEM
@@ -1179,6 +1229,11 @@ func _layout() -> void:
 		bot += maxf(0.0, (scr.y - sa.end.y) / sc)
 		bot += DisplayServer.virtual_keyboard_get_height() / sc
 		side += maxf(0.0, sa.position.x / sc)
+	if nav != null:
+		nav.offset_bottom = -(bot - 12.0)
+		nav.offset_top = nav.offset_bottom - KNav.HEIGHT
+		if nav.visible:
+			bot += KNav.HEIGHT
 	safe.add_theme_constant_override("margin_left", int(side))
 	safe.add_theme_constant_override("margin_right", int(side))
 	safe.add_theme_constant_override("margin_top", int(top))
@@ -1489,6 +1544,10 @@ func _show(pg: String) -> void:
 	p_home.visible = pg == "home"
 	p_chat.visible = pg == "chat"
 	p_set.visible = pg == "set"
+	if nav != null:
+		nav.visible = pg != "chat"
+		nav.current = pg
+		_layout()
 	if pg == "home":
 		cur = ""
 		list_dirty = true
