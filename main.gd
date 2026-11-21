@@ -391,7 +391,6 @@ var input: LineEdit
 var set_name_edit: LineEdit
 var set_pickers: Array = []
 var set_dir_lbl: Label
-var fd: FileDialog
 var nav: KNav
 
 
@@ -1137,13 +1136,12 @@ func _pump_files(pr: Dictionary) -> void:
 
 
 func _pick_file() -> void:
-	if DisplayServer.has_feature(DisplayServer.FEATURE_NATIVE_DIALOG_FILE):
-		DisplayServer.file_dialog_show("Fichier", "", "", false, DisplayServer.FILE_DIALOG_MODE_OPEN_FILE,
-				PackedStringArray(), func(ok: bool, paths: PackedStringArray, _i: int):
-					if ok and paths.size() > 0:
-						_send_file(cur, paths[0]))
-	else:
-		fd.popup_centered_ratio(0.85)
+	var fp = preload("res://kit/ui/k_file_picker.gd").new()
+	fp.title = "Envoyer des fichiers"
+	fp.files_selected.connect(func(paths: PackedStringArray):
+		for p in paths:
+			_send_file(cur, p))
+	fp.open_in(self, OS.get_environment("HOME") + "/Téléchargements" if DirAccess.dir_exists_absolute(OS.get_environment("HOME") + "/Téléchargements") else "")
 
 
 # ------------------------------------------------------------------ Interface
@@ -1242,12 +1240,6 @@ func _build_ui() -> void:
 	nav.setup([{"id": "home", "label": "Contacts", "icon": "message-circle"}, {"id": "set", "label": "Réglages", "icon": "settings"}], "home")
 	nav.selected.connect(func(id: String): _show(id))
 	add_child(nav)
-	fd = FileDialog.new()
-	fd.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	fd.access = FileDialog.ACCESS_FILESYSTEM
-	fd.use_native_dialog = false
-	fd.file_selected.connect(func(p: String): _send_file(cur, p))
-	add_child(fd)
 	resized.connect(_layout)
 	_layout()
 
