@@ -34,6 +34,7 @@ func setup(m: Control) -> void:
 	transparent_bg = true
 	unfocusable = true
 	transient = false
+	force_native = true
 	exclusive = false
 	wrap_controls = false
 	cv = Control.new()

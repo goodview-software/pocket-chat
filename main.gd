@@ -428,6 +428,7 @@ func _apply_hud() -> void:
 	var want := hud_on and not is_android and test_role == "" and DisplayServer.get_name() != "headless"
 	if want and hud == null:
 		hud = preload("res://hud.gd").new()
+		hud.visible = false
 		add_child(hud)
 		hud.setup(self)
 	elif not want and hud != null:
