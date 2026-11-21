@@ -1833,8 +1833,12 @@ func _test_tick(delta: float) -> void:  # (contient un await : le test « c » e
 		return
 	if test_role == "c":  # clic réel sur une carte de contact
 		if test_state == 0 and test_t > 1.5:
-			for c in list_box.get_children():
-				if c is Card and c.size.x > 10:
+			var cards: Array = []
+			for cc in list_box.get_children():
+				if cc is Card and cc.size.x > 10:
+					cards.append(cc)
+			for c in cards.slice(maxi(0, cards.size() - 1)):  # la DERNIÈRE carte = une personne (la première est le Général)
+				if true:
 					var pos: Vector2 = c.global_position + c.size / 2.0
 					get_window().notification(Window.NOTIFICATION_WM_MOUSE_ENTER)  # en headless la souris n'est « dans la fenêtre » qu'ainsi
 					var mv := InputEventMouseMotion.new()
@@ -1856,7 +1860,7 @@ func _test_tick(delta: float) -> void:  # (contient un await : le test « c » e
 					break
 		elif test_state == 1 and test_t > 2.2:
 			print("C: page=%s conv=%s" % [page, cur])
-			if page == "chat" and cur != "":
+			if page == "chat" and cur != "" and cur != "all":
 				test_quit_t = 0.2
 			else:
 				_test_fail("le clic sur un contact n'ouvre pas la conversation")
