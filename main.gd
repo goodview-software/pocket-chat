@@ -339,6 +339,8 @@ var my_name := "Moi"
 var my_mascot := 0
 var pref_name := ""
 var auto_accept := false
+var hud_on := true
+var hud: Window = null
 var profile_t := 0.0
 var beacon_t := 0.0
 
@@ -418,6 +420,32 @@ func _ready() -> void:
 	else:
 		_show("home")
 	_start_updates()
+	_apply_hud()
+
+
+## HUD overlay (PC seulement, pas en test headless).
+func _apply_hud() -> void:
+	var want := hud_on and not is_android and test_role == "" and DisplayServer.get_name() != "headless"
+	if want and hud == null:
+		hud = preload("res://hud.gd").new()
+		add_child(hud)
+		hud.setup(self)
+	elif not want and hud != null:
+		hud.queue_free()
+		hud = null
+
+
+## Ouvre une conversation (ou l'accueil si conv == "") et ramène la fenêtre au premier plan.
+func hud_open(conv: String) -> void:
+	var w := get_window()
+	if w.mode == Window.MODE_MINIMIZED:
+		w.mode = Window.MODE_WINDOWED
+	w.move_to_foreground()
+	w.grab_focus()
+	if conv == "":
+		_show("home")
+	else:
+		_open(conv)
 
 ## Mise à jour automatique commune aux apps Goodview (kit/update) : carte pixel art, bouton vert « METTRE À JOUR ».
 func _start_updates() -> void:
@@ -460,6 +488,7 @@ func _load_all() -> void:
 		pref_name = str(cf.get_value("me", "name", ""))
 		my_mascot = int(cf.get_value("me", "mascot", randi() % 8))
 		auto_accept = bool(cf.get_value("me", "auto", false))
+		hud_on = bool(cf.get_value("me", "hud", true))
 	if me_id == "":
 		me_id = "%08x" % (randi() & 0x7fffffff)
 		my_mascot = randi() % 8
@@ -490,6 +519,7 @@ func _save_all() -> void:
 	cf.set_value("me", "name", pref_name)
 	cf.set_value("me", "mascot", my_mascot)
 	cf.set_value("me", "auto", auto_accept)
+	cf.set_value("me", "hud", hud_on)
 	cf.save(_p("pref.cfg"))
 	var pd := {}
 	for id in peers:
@@ -955,6 +985,11 @@ func _add_msg(conv: String, m: Dictionary) -> void:
 			unread[conv] = int(unread.get(conv, 0)) + 1
 			if not get_window().has_focus():
 				DisplayServer.window_request_attention()
+				if hud != null:
+					var who := str(peers[m.from].name) if peers.has(str(m.get("from", ""))) else "?"
+					var mo := int(peers[m.from].mascot) if peers.has(str(m.get("from", ""))) else 0
+					var body := str(m.get("text", "")) if m.get("k", "") == "t" else "Fichier : " + str(m.get("name", ""))
+					hud.notify(conv, who + (" · Général" if conv == "all" else ""), body.replace("\n", " "), mo)
 		if page == "chat" and cur == conv:
 			stick = 3
 	elif conv == cur:
@@ -1488,6 +1523,24 @@ func _build_settings() -> void:
 	h1.add_child(tg)
 	c1.add_child(h1)
 	p_set.add_child(c1)
+	if not is_android:
+		var ch := Card.new()
+		var hh := HBoxContainer.new()
+		hh.add_theme_constant_override("separation", 12)
+		var hi := IconBtn.new("people", 44)
+		hi.col = C_OK
+		hi.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hh.add_child(hi)
+		hh.add_child(_spacer())
+		var ht := Toggle.new()
+		ht.set_on(hud_on)
+		ht.toggled.connect(func(on: bool):
+			hud_on = on
+			_apply_hud()
+			_save_soon())
+		hh.add_child(ht)
+		ch.add_child(hh)
+		p_set.add_child(ch)
 	var c2 := Card.new()
 	var v2 := VBoxContainer.new()
 	v2.add_theme_constant_override("separation", 8)

@@ -15,9 +15,11 @@ window/size/viewport_height=920
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=1
+window/per_pixel_transparency/allowed=true
 
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
+viewport/transparent_background=true
 renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
