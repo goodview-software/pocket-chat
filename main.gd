@@ -2,7 +2,7 @@ extends Control
 ## Pocket Chat : chat + fichiers sur le réseau local (Wi-Fi/LAN), sans serveur ni internet. PC Linux + Android.
 ## Découverte : beacon UDP (broadcast) ; liaison : TCP pair-à-pair. Trame : [type u8][longueur u16 LE][données]
 
-const APP_VERSION := "0.1.1"
+const APP_VERSION := "0.1.2"
 const PORT := 5205
 const BEACON_PORT := 5206
 const T_HELLO := 1  # json {id, name, mascot}
