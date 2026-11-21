@@ -382,6 +382,7 @@ func _ready() -> void:
 	if is_android:
 		_android_init()
 	_read_profile()
+	_ensure_self()
 	_build_ui()
 	if server.listen(tcp_port) != OK:
 		push_warning("TCP %d occupé" % tcp_port)
@@ -456,7 +457,8 @@ func _save_all() -> void:
 	cf.save(_p("pref.cfg"))
 	var pd := {}
 	for id in peers:
-		pd[id] = {"name": peers[id].name, "mascot": peers[id].mascot}
+		if not peers[id].get("self", false):
+			pd[id] = {"name": peers[id].name, "mascot": peers[id].mascot}
 	var h := {}
 	for conv in history:
 		var a: Array = history[conv]
@@ -495,6 +497,7 @@ func _read_profile() -> void:
 		var first := my_name == "Moi" and home_name == null
 		my_name = nm
 		my_mascot = ma
+		_ensure_self()
 		if not first:
 			_ui_me()
 			for id in peers:
@@ -543,6 +546,22 @@ func _new_peer(id: String) -> Dictionary:
 	return pr
 
 
+## Contact « Moi » : toujours visible et en ligne ; les trames envoyées vers lui reviennent par le même chemin
+## (messages, offres de fichiers, blocs, sha256) que celles d'un vrai pair -> permet de tout tester sans autre appareil.
+func _ensure_self() -> void:
+	var pr: Dictionary = peers[me_id] if peers.has(me_id) else _new_peer(me_id)
+	pr["self"] = true
+	pr.up = true
+	pr.seen = Time.get_ticks_msec()
+	pr.ip = "127.0.0.1"
+	var nm := "%s (moi)" % my_name
+	if pr.name != nm or pr.mascot != my_mascot:
+		pr.name = nm
+		pr.mascot = my_mascot
+		list_dirty = true
+		chat_dirty = true
+
+
 func _hello() -> PackedByteArray:
 	return JSON.stringify({"id": me_id, "name": my_name, "mascot": my_mascot}).to_utf8_buffer()
 
@@ -558,6 +577,8 @@ func _send(pr: Dictionary, type: int, data: PackedByteArray) -> void:
 		var o: PackedByteArray = pr.out
 		o.append_array(_frame(type, data))
 		pr.out = o
+	elif pr.get("self", false) and type != T_HELLO and type != T_PING:
+		_on_frame.call_deferred(pr, type, data)  # bouclage : on « reçoit » ce qu'on s'envoie
 
 
 func _send_json(pr: Dictionary, type: int, d: Dictionary) -> void:
@@ -572,7 +593,7 @@ func _targets(conv: String) -> Array:
 	var a: Array = []
 	if conv == "all":
 		for id in peers:
-			if peers[id].up:
+			if peers[id].up and not peers[id].get("self", false):
 				a.append(peers[id])
 	elif peers.has(conv):
 		a.append(peers[conv])
@@ -679,6 +700,11 @@ func _adopt(c: StreamPeerTCP, data: PackedByteArray) -> void:
 
 
 func _peer_tick(pr: Dictionary, now: int, delta: float) -> void:
+	if pr.get("self", false):
+		pr.up = true
+		pr.seen = now
+		_pump_files(pr)
+		return
 	var c: StreamPeerTCP = pr.conn
 	if c == null:
 		var online := now - int(pr.seen) < ONLINE_MS
@@ -1695,9 +1721,19 @@ func _test_tick(delta: float) -> void:
 			print("TEST %s OK" % test_role.to_upper())
 			get_tree().quit(0)
 		return
+	if test_role == "s" and test_state == 0 and test_t > 1.5:  # auto-test du contact « Moi » (bouclage local)
+		test_state = 1
+		_send_text(me_id, "self-hello")
+		var ssrc := data_dir.path_join("src.bin")
+		var sf := FileAccess.open(ssrc, FileAccess.WRITE)
+		sf.store_buffer(Crypto.new().generate_random_bytes(3 * 1024 * 1024))
+		sf.close()
+		test_src_sha = FileAccess.get_sha256(ssrc)
+		print("S: envoi à soi-même : texte + fichier 3 Mo sha=", test_src_sha)
+		_send_file(me_id, ssrc)
 	if test_role == "a" and test_state == 0:
 		for id in peers:
-			if peers[id].up:
+			if peers[id].up and not peers[id].get("self", false):
 				print("A: pair découvert et lié : ", peers[id].name)
 				_send_text(id, "hello-from-A")
 				var src := data_dir.path_join("src.bin")
@@ -1714,15 +1750,32 @@ func _test_tick(delta: float) -> void:
 func _test_hook(ev: String, data) -> void:
 	if test_role == "":
 		return
+	if test_role == "s":
+		if ev == "text" and str(data) == "self-hello":
+			print("S: message bouclé reçu")
+			test_state |= 2
+		elif ev == "file":
+			var sm: Dictionary = data
+			var ssha := FileAccess.get_sha256(str(sm.path))
+			print("S: fichier bouclé st=%s taille=%d sha=%s" % [sm.st, int(sm.size), ssha])
+			if sm.st != "done" or ssha != test_src_sha:
+				_test_fail("fichier bouclé corrompu")
+				return
+			test_state |= 4
+		if (test_state & 6) == 6:
+			test_quit_t = 1.0
+		return
 	if test_role == "b":
 		if ev == "text" and data == "hello-from-A":
 			print("B: message reçu")
 			_show("set")
 			_show("home")
 			for id in peers:
-				_open(id)
+				if not peers[id].get("self", false):
+					_open(id)
 			for id in peers:
-				_send_text(id, "hello-from-B")
+				if not peers[id].get("self", false):
+					_send_text(id, "hello-from-B")
 		elif ev == "file":
 			var m: Dictionary = data
 			var sha := FileAccess.get_sha256(str(m.path))
@@ -1731,7 +1784,8 @@ func _test_hook(ev: String, data) -> void:
 				_test_fail("fichier corrompu")
 				return
 			for id in peers:
-				_send_text(id, "file-ok:" + sha)
+				if not peers[id].get("self", false):
+					_send_text(id, "file-ok:" + sha)
 			test_quit_t = 2.0
 	elif test_role == "a":
 		if ev == "text" and str(data) == "hello-from-B":
