@@ -1126,10 +1126,11 @@ func _spacer() -> Control:
 	return s
 
 
+## Les ENFANTS ignorent la souris pour que la carte (le parent) reçoive le clic ; la carte elle-même reste cliquable.
 func _ign(n: Node) -> void:
-	if n is Control:
-		(n as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for c in n.get_children():
+		if c is Control:
+			(c as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_ign(c)
 
 
@@ -1819,7 +1820,7 @@ func _test_fail(msg: String) -> void:
 	get_tree().quit(1)
 
 
-func _test_tick(delta: float) -> void:
+func _test_tick(delta: float) -> void:  # (contient un await : le test « c » est asynchrone)
 	test_t += delta
 	if test_t > 45.0:
 		_test_fail("délai dépassé (état %d)" % test_state)
@@ -1829,6 +1830,36 @@ func _test_tick(delta: float) -> void:
 		if test_quit_t < 0.0:
 			print("TEST %s OK" % test_role.to_upper())
 			get_tree().quit(0)
+		return
+	if test_role == "c":  # clic réel sur une carte de contact
+		if test_state == 0 and test_t > 1.5:
+			for c in list_box.get_children():
+				if c is Card and c.size.x > 10:
+					var pos: Vector2 = c.global_position + c.size / 2.0
+					get_window().notification(Window.NOTIFICATION_WM_MOUSE_ENTER)  # en headless la souris n'est « dans la fenêtre » qu'ainsi
+					var mv := InputEventMouseMotion.new()
+					mv.position = pos
+					mv.global_position = pos
+					get_viewport().push_input(mv)
+					await get_tree().process_frame
+					var hov := get_viewport().gui_get_hovered_control()
+					print("C: survol = ", hov.get_class() if hov != null else "null", " ", hov.name if hov != null else "", " card=", c.name, " vis=", c.is_visible_in_tree())
+					for pressed in [true, false]:
+						var ev := InputEventMouseButton.new()
+						ev.button_index = MOUSE_BUTTON_LEFT
+						ev.pressed = pressed
+						ev.position = pos
+						ev.global_position = pos
+						get_viewport().push_input(ev)
+					print("C: clic envoyé en ", pos)
+					test_state = 1
+					break
+		elif test_state == 1 and test_t > 2.2:
+			print("C: page=%s conv=%s" % [page, cur])
+			if page == "chat" and cur != "":
+				test_quit_t = 0.2
+			else:
+				_test_fail("le clic sur un contact n'ouvre pas la conversation")
 		return
 	if test_role == "s" and test_state == 0 and test_t > 1.5:  # auto-test du contact « Moi » (bouclage local)
 		test_state = 1
