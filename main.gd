@@ -339,8 +339,6 @@ var my_name := "Moi"
 var my_mascot := 0
 var pref_name := ""
 var auto_accept := false
-var hud_on := true
-var hud: Window = null
 var profile_t := 0.0
 var beacon_t := 0.0
 
@@ -358,8 +356,8 @@ var save_t := -1.0
 var thumbs := {}
 
 var page := "home"
-var cur := ""  # conversation ouverte ("all" ou id)
-var open_convs: Array = []  # conversations privées ouvertes (mini-fenêtres) ; « Général » est toujours là
+var cur := ""  # conversation ouverte
+var open_convs: Array = []  # conversations privées ouvertes (mini-fenêtres)
 var dock: HBoxContainer
 var list_dirty := true
 var chat_dirty := false
@@ -416,37 +414,11 @@ func _ready() -> void:
 		auto_accept = true
 		print("CHAT[%s] %s tcp=%d udp=%d" % [test_role, me_id, tcp_port, udp_port])
 	if test_role == "":
-		_open("all")  # on démarre sur le Général
+		_open_first()
 	else:
 		_show("home")
 	_start_updates()
-	_apply_hud()
 
-
-## HUD overlay (PC seulement, pas en test headless).
-func _apply_hud() -> void:
-	var want := hud_on and not is_android and test_role == "" and DisplayServer.get_name() != "headless"
-	if want and hud == null:
-		hud = preload("res://hud.gd").new()
-		hud.visible = false
-		add_child(hud)
-		hud.setup(self)
-	elif not want and hud != null:
-		hud.queue_free()
-		hud = null
-
-
-## Ouvre une conversation (ou l'accueil si conv == "") et ramène la fenêtre au premier plan.
-func hud_open(conv: String) -> void:
-	var w := get_window()
-	if w.mode == Window.MODE_MINIMIZED:
-		w.mode = Window.MODE_WINDOWED
-	w.move_to_foreground()
-	w.grab_focus()
-	if conv == "":
-		_show("home")
-	else:
-		_open(conv)
 
 ## Mise à jour automatique commune aux apps Goodview (kit/update) : carte pixel art, bouton vert « METTRE À JOUR ».
 func _start_updates() -> void:
@@ -504,7 +476,6 @@ func _load_all() -> void:
 		pref_name = str(cf.get_value("me", "name", ""))
 		my_mascot = int(cf.get_value("me", "mascot", randi() % 8))
 		auto_accept = bool(cf.get_value("me", "auto", false))
-		hud_on = bool(cf.get_value("me", "hud", true))
 	if me_id == "":
 		me_id = "%08x" % (randi() & 0x7fffffff)
 		my_mascot = randi() % 8
@@ -535,7 +506,6 @@ func _save_all() -> void:
 	cf.set_value("me", "name", pref_name)
 	cf.set_value("me", "mascot", my_mascot)
 	cf.set_value("me", "auto", auto_accept)
-	cf.set_value("me", "hud", hud_on)
 	cf.save(_p("pref.cfg"))
 	var pd := {}
 	for id in peers:
@@ -636,7 +606,7 @@ func _ensure_self() -> void:
 	pr.up = true
 	pr.seen = Time.get_ticks_msec()
 	pr.ip = "127.0.0.1"
-	var nm := "%s (moi)" % my_name
+	var nm := my_name
 	if pr.name != nm or pr.mascot != my_mascot:
 		pr.name = nm
 		pr.mascot = my_mascot
@@ -673,11 +643,7 @@ func _is_online(pr: Dictionary) -> bool:
 
 func _targets(conv: String) -> Array:
 	var a: Array = []
-	if conv == "all":
-		for id in peers:
-			if peers[id].up and not peers[id].get("self", false):
-				a.append(peers[id])
-	elif peers.has(conv):
+	if peers.has(conv):
 		a.append(peers[conv])
 	return a
 
@@ -934,7 +900,7 @@ func _on_frame(pr: Dictionary, type: int, data: PackedByteArray) -> void:
 		T_MSG:
 			var d = JSON.parse_string(data.get_string_from_utf8())
 			if d is Dictionary:
-				var conv: String = "all" if d.get("room", false) else str(pr.id)
+				var conv: String = str(pr.id)
 				_add_msg(conv, {"id": str(d.get("mid", "")), "k": "t", "me": false, "from": pr.id, "ts": Time.get_unix_time_from_system(),
 						"text": str(d.get("text", "")).left(MAX_TEXT)})
 				_test_hook("text", str(d.get("text", "")))
@@ -994,18 +960,15 @@ func _add_msg(conv: String, m: Dictionary) -> void:
 	if not history.has(conv):
 		history[conv] = []
 	(history[conv] as Array).append(m)
-	if conv != "all" and not m.get("me", false) and conv not in open_convs:
+	if conv == "all":
+		return  # ancien salon Général supprimé : on ignore
+	if not m.get("me", false) and conv not in open_convs:
 		open_convs.append(conv)
 	if not m.get("me", false):
 		if not (page == "chat" and cur == conv):
 			unread[conv] = int(unread.get(conv, 0)) + 1
 			if not get_window().has_focus():
 				DisplayServer.window_request_attention()
-				if hud != null:
-					var who := str(peers[m.from].name) if peers.has(str(m.get("from", ""))) else "?"
-					var mo := int(peers[m.from].mascot) if peers.has(str(m.get("from", ""))) else 0
-					var body := str(m.get("text", "")) if m.get("k", "") == "t" else "Fichier : " + str(m.get("name", ""))
-					hud.notify(conv, who + (" · Général" if conv == "all" else ""), body.replace("\n", " "), mo)
 		if page == "chat" and cur == conv:
 			stick = 3
 	elif conv == cur:
@@ -1023,10 +986,7 @@ func _send_text(conv: String, text: String) -> void:
 		return
 	var mid := "%d%04x" % [Time.get_ticks_msec(), randi() & 0xffff]
 	var m := {"id": mid, "k": "t", "me": true, "ts": Time.get_unix_time_from_system(), "text": text, "st": "ok"}
-	if conv == "all":
-		for pr in _targets("all"):
-			_send_json(pr, T_MSG, {"mid": mid, "room": true, "text": text})
-	elif peers.has(conv) and peers[conv].up:
+	if peers.has(conv) and peers[conv].up:
 		_send_json(peers[conv], T_MSG, {"mid": mid, "room": false, "text": text})
 	else:
 		m["st"] = "q"
@@ -1048,7 +1008,7 @@ func _send_file(conv: String, path: String) -> void:
 		var hc := HashingContext.new()
 		hc.start(HashingContext.HASH_SHA256)
 		pr.xout[fid] = {"f": f, "size": size, "sent": 0, "hash": hc, "state": "offer", "msg": m, "end": false}
-		_send_json(pr, T_FOFFER, {"fid": fid, "name": name, "size": size, "room": conv == "all"})
+		_send_json(pr, T_FOFFER, {"fid": fid, "name": name, "size": size, "room": false})
 		_add_msg(conv, m)
 
 
@@ -1057,7 +1017,7 @@ func _on_offer(pr: Dictionary, data: PackedByteArray) -> void:
 	if not (d is Dictionary):
 		return
 	var fid := int(d.get("fid", 0))
-	var conv: String = "all" if d.get("room", false) else str(pr.id)
+	var conv: String = str(pr.id)
 	var m := {"id": "r%d_%s" % [fid, pr.id], "k": "f", "me": false, "from": pr.id, "ts": Time.get_unix_time_from_system(),
 			"name": _clean_name(str(d.get("name", "fichier"))), "size": int(d.get("size", 0)), "st": "offer", "prog": 0.0, "fid": fid}
 	_add_msg(conv, m)
@@ -1152,12 +1112,23 @@ func _pump_files(pr: Dictionary) -> void:
 
 
 func _pick_file() -> void:
-	var fp = preload("res://kit/ui/k_file_picker.gd").new()
+	var conv := cur
+	var home := OS.get_environment("HOME")
+	var start := home + "/Téléchargements" if DirAccess.dir_exists_absolute(home + "/Téléchargements") else home
+	if not is_android and DisplayServer.has_feature(DisplayServer.FEATURE_NATIVE_DIALOG_FILE):
+		var err := DisplayServer.file_dialog_show("Envoyer des fichiers", start, "", false, DisplayServer.FILE_DIALOG_MODE_OPEN_FILES, PackedStringArray(),
+				func(ok: bool, paths: PackedStringArray, _f: int):
+					if ok:
+						for p in paths:
+							_send_file(conv, p))
+		if err == OK:
+			return
+	var fp = preload("res://kit/ui/k_file_picker.gd").new()  # repli : sélecteur du kit (Android, pas de dialogue natif)
 	fp.title = "Envoyer des fichiers"
 	fp.files_selected.connect(func(paths: PackedStringArray):
 		for p in paths:
-			_send_file(cur, p))
-	fp.open_in(self, OS.get_environment("HOME") + "/Téléchargements" if DirAccess.dir_exists_absolute(OS.get_environment("HOME") + "/Téléchargements") else "")
+			_send_file(conv, p))
+	fp.open_in(self, start if not is_android else "")
 
 
 # ------------------------------------------------------------------ Interface
@@ -1340,29 +1311,6 @@ func _refresh_home() -> void:
 			c.queue_free()
 	if empty_orb.get_parent() == list_box:
 		list_box.remove_child(empty_orb)
-	# salon commun
-	var tot := 0
-	for id in peers:
-		if peers[id].up:
-			tot += 1
-	var all := Card.new()
-	var hb := HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 14)
-	var ic := IconBtn.new("people", 48)
-	ic.fill = Color(C_OK, 0.18)
-	ic.col = C_OK
-	hb.add_child(ic)
-	var t := _lbl("Général", 19)
-	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hb.add_child(t)
-	hb.add_child(_spacer())
-	hb.add_child(_chip(str(tot), "wifi", C_OK if tot > 0 else C_DIM))
-	if int(unread.get("all", 0)) > 0:
-		hb.add_child(_count(int(unread["all"])))
-	all.add_child(hb)
-	_ign(all)
-	all.tapped.connect(_open.bind("all"))
-	list_box.add_child(all)
 	# pairs : en ligne d'abord
 	var ids: Array = peers.keys()
 	ids.sort_custom(func(a, b):
@@ -1374,6 +1322,8 @@ func _refresh_home() -> void:
 	var any_online := false
 	for id in ids:
 		var pr: Dictionary = peers[id]
+		if pr.get("self", false):
+			continue  # « Moi » (bouclage test) jamais affiché
 		var on := _is_online(pr)
 		any_online = any_online or on
 		var card := Card.new()
@@ -1523,7 +1473,11 @@ func _build_settings() -> void:
 	di.col = C_OK
 	di.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h1.add_child(di)
-	h1.add_child(_spacer())
+	var l1 := _lbl("Accepter les fichiers automatiquement", 16)
+	l1.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l1.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h1.add_child(l1)
 	var tg := Toggle.new()
 	tg.set_on(auto_accept)
 	tg.toggled.connect(func(on: bool):
@@ -1532,24 +1486,6 @@ func _build_settings() -> void:
 	h1.add_child(tg)
 	c1.add_child(h1)
 	p_set.add_child(c1)
-	if not is_android:
-		var ch := Card.new()
-		var hh := HBoxContainer.new()
-		hh.add_theme_constant_override("separation", 12)
-		var hi := IconBtn.new("people", 44)
-		hi.col = C_OK
-		hi.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		hh.add_child(hi)
-		hh.add_child(_spacer())
-		var ht := Toggle.new()
-		ht.set_on(hud_on)
-		ht.toggled.connect(func(on: bool):
-			hud_on = on
-			_apply_hud()
-			_save_soon())
-		hh.add_child(ht)
-		ch.add_child(hh)
-		p_set.add_child(ch)
 	var c2 := Card.new()
 	var v2 := VBoxContainer.new()
 	v2.add_theme_constant_override("separation", 8)
@@ -1559,6 +1495,7 @@ func _build_settings() -> void:
 	fic.col = C_OK
 	fic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fi.add_child(fic)
+	fi.add_child(_lbl("Dossier de réception", 16))
 	set_dir_lbl = _lbl("", 14, C_DIM)
 	set_dir_lbl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	set_dir_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1617,9 +1554,21 @@ func _show(pg: String) -> void:
 		set_dir_lbl.text = _dl_dir()
 
 
+## Démarrage : 1ʳᵉ personne en ligne, sinon l'écran « choisis quelqu'un ».
+func _open_first() -> void:
+	for id in peers:
+		if not peers[id].get("self", false) and _is_online(peers[id]):
+			_open(str(id))
+			return
+	_show("home")
+
+
 func _open(conv: String) -> void:
+	if conv == "all":
+		_show("home")
+		return
 	cur = conv
-	if conv != "all" and conv not in open_convs:
+	if conv not in open_convs:
 		open_convs.append(conv)
 		_save_soon()
 	unread.erase(conv)
@@ -1632,11 +1581,7 @@ func _open(conv: String) -> void:
 
 
 func _ui_chat_head() -> void:
-	if cur == "all":
-		chat_name.text = "Général"
-		chat_avatar.visible = false
-		chat_icon.visible = true
-	elif peers.has(cur):
+	if peers.has(cur):
 		chat_name.text = str(peers[cur].name)
 		chat_avatar.visible = true
 		chat_icon.visible = false
@@ -1651,13 +1596,12 @@ func _ui_chat_head() -> void:
 	_render_dock()
 
 
-## Mini-fenêtres : « Général » (coché, toujours présent) puis une pastille par conversation privée, avec croix rouge.
+## Mini-fenêtres : une pastille par conversation privée, avec croix rouge.
 func _render_dock() -> void:
 	if dock == null:
 		return
 	for c in dock.get_children():
 		c.queue_free()
-	_dock_chip("all", "Général", null, cur == "all")
 	for id in open_convs.duplicate():
 		if peers.has(id):
 			_dock_chip(id, str(peers[id].name), peers[id], cur == id)
@@ -1720,17 +1664,9 @@ func _close_conv(id: String) -> void:
 	open_convs.erase(id)
 	_save_soon()
 	if cur == id:
-		_open("all")
+		_open_first()
 	else:
 		_render_dock()
-
-
-## Envoie dans le Général un message (ou un fichier) reçu/écrit en privé.
-func _forward_to_general(m: Dictionary) -> void:
-	if m.get("k", "") == "t":
-		_send_text("all", str(m.text))
-	elif m.get("k", "") == "f" and FileAccess.file_exists(str(m.get("path", ""))):
-		_send_file("all", str(m.path))
 
 
 func _hm(ts: float) -> String:
@@ -1771,8 +1707,6 @@ func _render_chat() -> void:
 		bub.add_theme_stylebox_override("panel", sb)
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 4)
-		if not me and cur == "all" and peers.has(m.get("from", "")):
-			v.add_child(_lbl(str(peers[m.from].name), 13, C_OK))
 		var foot := HBoxContainer.new()
 		foot.add_theme_constant_override("separation", 6)
 		if m.get("k", "") == "t":
@@ -1793,14 +1727,6 @@ func _render_chat() -> void:
 		else:
 			_file_body(v, foot, m, me, maxw)
 		foot.add_child(_spacer())
-		if cur != "all" and (m.get("k", "") == "t" or (m.get("k", "") == "f" and m.get("st", "") == "done")):
-			var fw := IconBtn.new("send", 22)
-			fw.col = C_DIM
-			fw.tooltip_text = "Envoyer dans le Général"
-			fw.pressed.connect(func():
-				fw.col = C_OK
-				_forward_to_general(m))
-			foot.add_child(fw)
 		foot.add_child(_lbl(_hm(float(m.ts)), 12, C_DIM))
 		v.add_child(foot)
 		bub.add_child(v)
@@ -1826,7 +1752,7 @@ func _file_body(v: VBoxContainer, foot: HBoxContainer, m: Dictionary, me: bool, 
 	nl.clip_text = true
 	nl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	col.add_child(nl)
-	col.add_child(_lbl(_fsize(int(m.size)) + ((" · " + str(m.to)) if me and cur == "all" else ""), 13, C_DIM))
+	col.add_child(_lbl(_fsize(int(m.size)) + "", 13, C_DIM))
 	top.add_child(col)
 	v.add_child(top)
 	var path := str(m.get("path", ""))
