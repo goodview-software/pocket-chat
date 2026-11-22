@@ -406,6 +406,7 @@ func _ready() -> void:
 	KTok.set_pixel(true)
 	_build_ui()
 	KPixelize.install(self)
+	_overlay_init()
 	if server.listen(tcp_port) != OK:
 		push_warning("TCP %d occupé" % tcp_port)
 	if lan.bind(udp_port) != OK:
@@ -466,6 +467,21 @@ func _notification(what: int) -> void:
 			_quit()
 	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
 		beacon_t = 0.0
+
+
+## Bulle flottante quand l'app passe en arrière-plan (Android + plugin PocketOverlay uniquement).
+func _overlay_init() -> void:
+	var ov: Node = preload("res://kit/overlay/overlay.gd").new()
+	add_child(ov)
+	if not ov.available():
+		return
+	ov.state_fn = func() -> Dictionary:
+		var n := 0
+		for id in peers:
+			if _is_online(peers[id]):
+				n += 1
+		return {"ok": n > 0, "text": ("%d en ligne" % n) if n > 0 else "Personne en ligne", "buttons": false}
+	preload("res://kit/overlay/overlay_ask.gd").ask_once(self, ov, "Pocket Chat", "user://overlay.cfg")
 
 
 func _quit() -> void:
